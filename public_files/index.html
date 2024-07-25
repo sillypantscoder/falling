@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+	<head></head>
+	<body>
+		<script>
+var w = new WebSocket(`wss://${location.hostname}:8774/`)
+w.addEventListener("error", (e) => {
+	console.log(e)
+})
+var time = Date.now()
+w.addEventListener("open", (e) => {
+	sendmessage()
+})
+w.addEventListener("message", (e) => {
+	console.log(e.data)
+	console.log(`round trip took ${Date.now() - time} ms`)
+})
+function sendmessage() {
+	time = Date.now()
+	w.send("hi here is some data")
+}
+		</script>
+	</body>
+</html>
