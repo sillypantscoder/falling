@@ -12,6 +12,7 @@ body {
 	align-items: stretch;
 	justify-content: space-evenly;
 	font-family: sans-serif;
+	user-select: none;
 }
 .player {
 	padding: 2em;
@@ -32,8 +33,12 @@ body {
 	height: 3em;
 	border-radius: 0.4em;
 	transition: background-color ease-in-out 0.07s;
+	position: relative;
 }
 .rider-slot {
+	display: inline-flex;
+	flex-direction: column;
+	justify-content: flex-end;
 	width: 3em;
 	height: 2em;
 }
@@ -41,18 +46,24 @@ body {
 	background-color: #0003;
 }
 .card {
-	position: relative;
+	position: absolute;
 	display: inline-block;
 	border-radius: 0.4em;
 	background: white;
 	width: 2em;
 	height: 3em;
 	box-shadow: 0em 0.3em 0.5em black;
-	user-select: none;
+	z-index: 1;
+	flex-shrink: 0;
 }
-.rider-slot > .card:not(.rideraddanimation), .card.rideranimation {
+.card.rider-card {
 	transform: rotate(90deg) translate(-0.5em, -0.5em);
 	box-shadow: 0.3em 0em 0.5em black;
+	margin: -1em 0;
+	position: relative;
+}
+.card.normal-transitions {
+	transition: top ease-in-out 0.4s, left ease-in-out 0.4s, transform ease-in-out 0.4s, box-shadow ease-in-out 0.4s;
 }
 .name {
 	padding-top: 3em;
@@ -60,30 +71,6 @@ body {
 		</style>
 	</head>
 	<body>
-		<div class="player">
-			<div class="card-slot rider-slot"><div class="card" id="cardone"></div></div>
-			<div class="piles">
-				<div class="card-slot"><div class="card"></div></div>
-				<div class="card-slot"><div class="card"></div></div>
-			</div>
-			<div class="name">Person</div>
-		</div>
-		<div class="player">
-			<div class="card-slot rider-slot"></div>
-			<div class="piles">
-				<div class="card-slot"><div class="card"></div></div>
-				<div class="card-slot" id="cardtwo"></div>
-			</div>
-			<div class="name">Person</div>
-		</div>
-		<div class="player">
-			<div class="card-slot rider-slot"><div class="card"></div></div>
-			<div class="piles">
-				<div class="card-slot"></div>
-				<div class="card-slot"></div>
-			</div>
-			<div class="name">Person</div>
-		</div>
 		<script src="index.js"></script>
 	</body>
 </html>
