@@ -6,15 +6,18 @@ class InternalClient(typing.TypedDict):
 	handler: ws.WebSocketHandler
 	address: tuple[str, int]
 
-class Client:
-	def __init__(self, internal: InternalClient, server: "WSServer"):
+T = typing.TypeVar('T')
+
+class Client(typing.Generic[T]):
+	def __init__(self, internal: InternalClient, server: "WSServer[T]"):
 		self.internal = internal
 		self.server = server
 		self.id = internal["id"]
+		self.data: T | None = None
 	def sendMessage(self, msg: str):
 		self.server.server.send_message(self.internal, msg) # type: ignore
 
-class WSServer:
+class WSServer(typing.Generic[T]):
 	def __init__(self, port: int):
 		# Setup
 		self.server = ws.WebsocketServer(host="0.0.0.0", port=port)
@@ -22,14 +25,14 @@ class WSServer:
 		self.server.set_fn_client_left(lambda client, server: self.client_left(client, server)) # type: ignore
 		self.server.set_fn_message_received(lambda client, server, message: self.message_received(client, server, message)) # type: ignore
 		# keep track of clients
-		self.clients: list[Client] = []
-		self.events_on_connect: list[typing.Callable[[ Client ], None]] = []
-		self.events_on_message: list[typing.Callable[[ Client, str ], None]] = []
-		self.events_on_disconnect: list[typing.Callable[[ Client ], None]] = []
+		self.clients: list[Client[T]] = []
+		self.events_on_connect: list[typing.Callable[[ Client[T] ], None]] = []
+		self.events_on_message: list[typing.Callable[[ Client[T], str ], None]] = []
+		self.events_on_disconnect: list[typing.Callable[[ Client[T] ], None]] = []
 	def run(self):
 		print(f"Server started at: http://{self.server.server_address[0]}:{self.server.server_address[1]}/")
 		self.server.run_forever()
-	def find_client(self, client: InternalClient) -> Client:
+	def find_client(self, client: InternalClient) -> Client[T]:
 		if client == None: # type: ignore
 			raise Exception(f"Could not find client with id None")
 		for c in self.clients:
@@ -51,14 +54,13 @@ class WSServer:
 
 
 if __name__ == "__main__":
-	server = WSServer(8774)
-	def connect(c: Client):
+	server: WSServer[None] = WSServer(8774)
+	def connect(c: Client[None]):
 		print(f"new connection with id {c.id}")
-		# [x.sendMessage(f"hello: {c.id}") for x in server.clients]
-	def disconnect(c: Client):
-		pass
-		# [x.sendMessage(f"bye: {c.id}") for x in server.clients]
-	def message(c: Client, message: str):
+		[x.sendMessage(f"hello: {c.id}") for x in server.clients]
+	def disconnect(c: Client[None]):
+		[x.sendMessage(f"bye: {c.id}") for x in server.clients]
+	def message(c: Client[None], message: str):
 		[x.sendMessage(f"message from {c.id}: {message}") for x in server.clients]
 	server.events_on_connect.append(connect)
 	server.events_on_disconnect.append(disconnect)
