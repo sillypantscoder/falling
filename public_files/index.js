@@ -24,14 +24,15 @@ var frame = async (/** @type {number} */ n) => {
 var time = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (() => {
-	// Update document height to be correct
-	// (for some reason 100vh doesn't cover full screen)
-	const appHeight = () => {
+	// Update document size to be correct
+	// (for some reason 100vh/100vw doesn't cover full screen)
+	const appSize = () => {
 		const doc = document.documentElement
 		doc.style.setProperty('height', `${window.innerHeight}px`)
+		doc.style.setProperty('width', `${window.innerWidth}px`)
 	}
-	window.addEventListener('resize', appHeight)
-	frame(3).then(appHeight)
+	window.addEventListener('resize', appSize)
+	frame(3).then(appSize)
 })();
 
 /**
@@ -180,8 +181,15 @@ var players = []
 function getPlayerFromName(name) { var p = players.find((v) => v.name == name); if (p == undefined) throw new Error(`Player '${name}' not found`); return p; }
 function getMe() { return getPlayerFromName(my_name) }
 
+/**
+ * @typedef {{ type: "CreatePlayer", name: string, piles: CardType[][], rider: null | { rider: CardType, extras: CardType[] } }} CreatePlayerMessageType
+ * @typedef {{ type: "PlayRider", playerFrom: string, fromPile: number, playerTo: string }} PlayRiderMessageType
+ * @typedef {{ type: "RevertCard", pile: number }} RevertCardMessageType
+ * @typedef {{ type: "DealCard", player: string, pile: number, card: CardType }} DealCardMessageType
+ * @typedef {{ type: "RemoveRider", player: string }} RemoveRiderMessageType
+ */
 socket.addEventListener("message", (e) => {
-	/** @type {{ type: "CreatePlayer", name: string, piles: CardType[][], rider: null | { rider: CardType, extras: CardType[] } } | { type: "PlayRider", playerFrom: string, fromPile: number, playerTo: string } | { type: "RevertCard", pile: number }} */
+	/** @type {CreatePlayerMessageType | PlayRiderMessageType | RevertCardMessageType | DealCardMessageType | RemoveRiderMessageType} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -202,14 +210,49 @@ socket.addEventListener("message", (e) => {
 		card.animateMove(newParent, "afterbegin")
 		// Structural movement
 		pile.splice(pile.length - 1, 1)
-		playerTo.rider = {
-			rider: card,
-			extras: []
+		if (playerTo.rider == null) {
+			playerTo.rider = {
+				rider: card,
+				extras: []
+			}
+		} else {
+			playerTo.rider.extras.push(card)
 		}
 	} else if (data.type == "RevertCard") {
 		getMe().piles[data.pile].forEach((card) => {
 			card.elm.classList.remove("remove-normal-transitions")
 			card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
+		})
+	} else if (data.type == "DealCard") {
+		var player = getPlayerFromName(data.player)
+		var pile = player.piles[data.pile]
+		var card = new Card(data.card)
+		card.elm.setAttribute("style", `background: ${card.getColor()}; top: -20em; left: 0;`)
+		pile.push(card)
+		player.element.children[1].children[data.pile].appendChild(card.elm);
+		((card) => {
+			frame(2).then(() => {
+				card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
+			})
+		})(card);
+	} else if (data.type == "RemoveRider") {
+		var player = getPlayerFromName(data.player)
+		if (player.rider == null) return;
+		var riderElms = [player.rider.rider.elm, ...player.rider.extras.map((v) => v.elm)]
+		var riderColors = [player.rider.rider.getColor(), ...player.rider.extras.map((v) => v.getColor())]
+		player.rider = null
+		// Animate movement
+		riderElms.forEach((v, i) => {
+			v.classList.remove("remove-normal-transitions")
+			v.setAttribute("style", `background: ${riderColors[i]}; top: -0em; left: 0;`)
+			frame(2).then(() => {
+				v.setAttribute("style", `background: ${riderColors[i]}; top: -20em; left: 0;`)
+			})
+		})
+		time(400).then(() => {
+			riderElms.forEach((v) => {
+				v.remove()
+			})
 		})
 	} else {
 		console.warn("Unknown message recieved...", data)

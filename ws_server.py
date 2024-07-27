@@ -2,6 +2,8 @@ from wslib import WSServer, Client
 import json
 import typing
 import random
+import threading
+import time
 
 class Card:
 	def canPlay(self, playerFrom: "Player", playerTo: "Player") -> bool:
@@ -28,7 +30,12 @@ class RiderCard(Card):
 		}))
 	def deal(self, player: "Player", amount: int):
 		for _ in range(amount):
-			[player.game.deal(pile) for pile in player.piles]
+			[player.game.dealCard(player, pileIndex) for pileIndex in range(len(player.piles))]
+		player.game.broadcast(json.dumps({
+			"type": "RemoveRider",
+			"player": player.name
+		}))
+		player.rider = None
 
 class HitCard(RiderCard):
 	def deal(self, player: "Player", amount: int):
@@ -43,6 +50,12 @@ class ExtraCard(Card):
 	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
 		if playerTo.rider != None:
 			playerTo.rider["extras"].append(self)
+			playerTo.game.broadcast(json.dumps({
+				"type": "PlayRider",
+				"playerFrom": playerFrom.name,
+				"fromPile": pileIndex,
+				"playerTo": playerTo.name
+			}))
 	@staticmethod
 	def getID() -> str:
 		return "extra"
@@ -65,7 +78,7 @@ class Player:
 		]
 		self.rider: RiderType | None = None if random.choice([True, False]) else {
 			"rider": HitCard(),
-			"extras": [ExtraCard() for _ in range(random.choice([0, 1, 2]))]
+			"extras": [ExtraCard() for _ in range(random.choice([0, 0, 0, 0, 1, 2]))]
 		}
 	def getCreationMessage(self):
 		return json.dumps({
@@ -74,7 +87,6 @@ class Player:
 			"piles": [[card.getID() for card in pile] for pile in self.piles],
 			"rider": { "rider": self.rider["rider"].getID(), "extras": [c.getID() for c in self.rider["extras"]] } if self.rider != None else None
 		})
-
 
 server: WSServer = WSServer(8774)
 
@@ -85,6 +97,7 @@ class Game:
 		]
 		self.deck = []
 		self.populateDeck()
+		self.turn = 0
 	def populateDeck(self):
 		self.deck = [
 			*[HitCard() for _ in range(50)],
@@ -156,19 +169,41 @@ class Game:
 		else:
 			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
 			c.disconnect()
-	def deal(self, pile: list[Card]):
+	def dealCards(self):
+		while len(self.deck) > 0:
+			# Do turn
+			turn = self.players[self.turn]
+			if turn.rider == None:
+				for pileIndex in range(len(turn.piles)):
+					self.dealCard(turn, pileIndex)
+			else:
+				amount = len(turn.rider["extras"]) + 1
+				turn.rider["rider"].deal(turn, amount)
+			# Continue
+			self.turn += 1
+			if self.turn >= len(self.players):
+				self.turn = 0
+	def dealCard(self, player: Player, pileIndex: int):
 		if len(self.deck) == 0:
-			pass
-			# pile.append(GroundCard()) # HAHHAA
-		else:
-			pile.append(self.deck.pop())
-	def playCard(self, fromPlayer: Player, toPlayer: Player, pileIndex: int, cardName: str):
-		if fromPlayer.piles:
-			pass
+			# TODO: Deal ground cards
+			return
+		card = self.deck.pop()
+		player.piles[pileIndex].append(card)
+		self.broadcast(json.dumps({
+			"type": "DealCard",
+			"player": player.name,
+			"pile": pileIndex,
+			"card": card.getID()
+		}))
+		time.sleep(1)
 
 g = Game()
+threading.Thread(target=g.dealCards, name="dealer", args=()).start()
 
 server.events_on_connect.append(g.onConnect)
 server.events_on_disconnect.append(g.onDisconnect)
 server.events_on_message.append(g.onMessage)
 server.run()
+
+# stop the dealing thread
+g.deck = []
