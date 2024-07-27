@@ -245,11 +245,15 @@ socket.addEventListener("message", (e) => {
 		var pile = player.piles[data.pile]
 		var card = new Card(data.card)
 		card.elm.setAttribute("style", `background: ${card.getColor()}; top: -20em; left: 0;`)
+		card.elm.classList.add("no-pickup")
 		pile.push(card)
 		player.element.children[1].children[data.pile].appendChild(card.elm);
 		((card) => {
 			frame(2).then(() => {
 				card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
+			})
+			time(400).then(() => {
+				card.elm.classList.remove("no-pickup")
 			})
 		})(card);
 	} else if (data.type == "RemoveRider") {
@@ -295,10 +299,17 @@ socket.addEventListener("message", (e) => {
  */
 function mouseDownOnCard(pile, loc, pileIndex) {
 	var me = getMe()
-	var card = me.piles[pile][me.piles[pile].length - 1]
+	var cardIndex = me.piles[pile].length - 1
+	var slide = false
+	if (cardIndex > 0 && me.piles[pile][cardIndex].elm.classList.contains("no-pickup")) {
+		cardIndex -= 1
+		slide = true
+	}
+	var card = me.piles[pile][cardIndex]
 	// Notify server
 	socket.send(JSON.stringify({
 		type: "GrabCard",
+		slide,
 		pileIndex
 	}))
 	// Animation
@@ -463,6 +474,7 @@ function cardDragEnd(card, mousePos) {
 		if (validPlay) {
 			socket.send(JSON.stringify({
 				type: "GrabCard",
+				slide: false,
 				pileIndex: pile
 			}))
 			socket.send(JSON.stringify({

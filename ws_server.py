@@ -192,33 +192,40 @@ class Game:
 				self.broadcast(newPlayer.getCreationMessage())
 		elif msg["type"] == "GrabCard":
 			playerFrom = self.findPlayerFromClient(c)
+			# Ensure player is logged in
 			if playerFrom == None:
 				print(f'ERROR: client {c.id} cannot play a card as they are not logged in')
 				return
+			# Find the selected card
 			pileIndex: int = msg["pileIndex"]
 			pile = playerFrom.piles[pileIndex]
 			# Register the card
 			playerFrom.hand = {
 				"pickupTime": datetime.datetime.now(),
 				"pileIndex": pileIndex,
-				"cardIndex": len(pile) - 1
+				"cardIndex": len(pile) - (2 if msg["slide"] else 1)
 			}
 		elif msg["type"] == "PlayCard":
 			playerFrom = self.findPlayerFromClient(c)
+			# Ensure player is logged in
 			if playerFrom == None:
 				print(f'ERROR: client {c.id} cannot play a card as they are not logged in')
 				return
+			# Ensure the player has picked up a card
 			if playerFrom.hand == None:
 				print(f'ERROR: client {c.id} cannot play a card without picking up a card first')
 				return
+			# Ensure the player has not been holding a card for too long
 			if (datetime.datetime.now() - playerFrom.hand["pickupTime"]).total_seconds() > 1.5:
 				return
+			# Ensure there is a valid target player
 			if msg["target"] == None:
 				return
 			playerTo = self.findPlayerFromName(msg["target"])
 			if playerTo == None:
 				print(f'ERROR: client {c.id} cannot play a card to unknown player {msg["target"]}')
 				return
+			# Find the selected card
 			pileIndex = playerFrom.hand["pileIndex"]
 			pile = playerFrom.piles[pileIndex]
 			# Play the card!
@@ -231,6 +238,7 @@ class Game:
 				return
 			pile.remove(card)
 			card.play(playerFrom, pileIndex, playerFrom.hand["cardIndex"], playerTo)
+			playerFrom.hand = None
 			# Remove the pile if necessary
 			if len(pile) == 0:
 				playerFrom.piles.pop(pileIndex)
@@ -248,7 +256,7 @@ class Game:
 			time.sleep(0.3)
 		input("Press Enter to start dealing")
 		# Start
-		extraTurns = 100
+		extraTurns = 20 + (len(self.players) * 3)
 		while extraTurns > 0:
 			if len(self.deck) == 0:
 				extraTurns -= 1
@@ -272,7 +280,9 @@ class Game:
 			self.turn += 1
 			if self.turn >= len(self.players):
 				self.turn = 0
+		print("Finished dealing")
 	def dealCard(self, player: Player, pileIndex: int):
+		if pileIndex >= len(player.piles): return
 		# - Find which card to use
 		card = GroundCard()
 		if len(self.deck) > 0:
@@ -284,7 +294,6 @@ class Game:
 			if len(player.piles[pileIndex]) > 0 and isinstance(player.piles[pileIndex][-1], GroundCard):
 				return
 		# - Add the card
-		if pileIndex >= len(player.piles): return
 		player.piles[pileIndex].append(card)
 		self.broadcast(json.dumps({
 			"type": "DealCard",
