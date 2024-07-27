@@ -50,20 +50,23 @@ class Player:
 		self.game = game
 		self.name = name
 		self.client: Client | None = None
-		self.piles: list[list[Card]] = [[
-			HitCard() for _ in range(random.choice([0, 1, 2, 3]))
-		]]
+		self.piles: list[list[Card]] = [
+			[
+				HitCard() for _ in range(random.choice([0, 1, 2, 3]))
+			]
+			for _ in range(random.choice([1, 2]))
+		]
 		self.rider: RiderType | None = None if random.choice([True, False]) else {
 			"rider": HitCard(),
 			"extras": [ExtraCard() for _ in range(random.choice([0, 1, 2]))]
 		}
-	# def getCardFromPile(self, pileIndex: int, expectedCardName: str):
-	# 	if pileIndex < 0 or pileIndex >= len(self.piles):
-	# 		return None
-	# 	if len(self.piles[pileIndex]) == 0:
-	# 		# error? should never be a zero-length pile, it should have been removed as a pile
-	# 		return None
-	# 	topCard = self.piles[pileIndex].pop()
+	def getCreationMessage(self):
+		return json.dumps({
+			"type": "CreatePlayer",
+			"name": self.name,
+			"piles": [[card.getID() for card in pile] for pile in self.piles],
+			"rider": { "rider": self.rider["rider"].getID(), "extras": [c.getID() for c in self.rider["extras"]] } if self.rider != None else None
+		})
 
 
 server: WSServer = WSServer(8774)
@@ -85,25 +88,23 @@ class Game:
 		for p in self.players:
 			if p.client == c:
 				return p
+	def findPlayerFromName(self, c: str):
+		for p in self.players:
+			if p.name == c:
+				return p
+	def broadcast(self, msg: str):
+		# Send game state
+		for p in self.players:
+			if p.client != None:
+				p.client.sendMessage(msg)
 	def onConnect(self, c: Client):
 		# Send game state
 		for p in self.players:
-			c.sendMessage(json.dumps({
-				"type": "CreatePlayer",
-				"name": p.name,
-				"piles": [[card.getID() for card in pile] for pile in p.piles],
-				"rider": { "rider": p.rider["rider"].getID(), "extras": [c.getID() for c in p.rider["extras"]] } if p.rider != None else None
-			}))
+			c.sendMessage(p.getCreationMessage())
 	def onDisconnect(self, c: Client):
 		p = self.findPlayerFromClient(c)
 		if p:
 			p.client = None
-			for others in self.players:
-				if others.client:
-					others.client.sendMessage(json.dumps({
-						"type": "Disconnected",
-						"name": p.name,
-					}))
 	def getPlayerFromTarget(self, target: str):
 		for p in self.players:
 			if p.name == target:
@@ -111,24 +112,23 @@ class Game:
 		return None
 	def onMessage(self, c: Client, message: str):
 		msg = json.loads(message)
-		match msg["type"]:
-			case None:
-				c.sendMessage("ERROR: no message type")
-			case "PlayCard":
-				fromPlayer = self.findPlayerFromClient(c)
-				if not fromPlayer:
-					c.sendMessage(f'ERROR: invalid source player')
-					return
-				target = msg["target"]
-				toPlayer = self.getPlayerFromTarget(target)
-				if toPlayer is None:
-					c.sendMessage(f'ERROR: invalid target player "{target}"')
-					return
-				self.playCard(fromPlayer, toPlayer, msg["pile"], msg["card"])
-			case _:
-				c.sendMessage(f'ERROR: unknown message type "{msg["type"]}"')
-		# c.sendMessage("sorry, what was that?")
-		# c.disconnect()
+		if msg["type"] == "Login":
+			p = self.findPlayerFromName(msg["name"])
+			if p:
+				if p.client != None:
+					print(f'ERROR: client {c.id} attempted to connect as {p.name} (already taken by client {p.client.id})')
+					c.disconnect()
+				else:
+					# Login
+					p.client = c
+			else:
+				# Create a new player
+				newPlayer = Player(self, msg["name"])
+				self.players.append(newPlayer)
+				self.broadcast(newPlayer.getCreationMessage())
+		else:
+			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
+			c.disconnect()
 	def deal(self, pile: list[Card]):
 		if len(self.deck) == 0:
 			pass

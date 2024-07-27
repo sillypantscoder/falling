@@ -3,10 +3,16 @@ socket.addEventListener("error", (e) => {
 	console.log(e)
 })
 socket.addEventListener("open", () => {
+	socket.send(JSON.stringify({
+		type: "Login",
+		name: my_name
+	}))
 })
 socket.addEventListener("close", () => {
 	console.error("Warning! Websocket is disconnected!")
 })
+
+var my_name = "me1"
 
 var gid = (/** @type {string} */ id) => document.getElementById(id)
 var frame = async (/** @type {number} */ n) => {
@@ -31,6 +37,14 @@ var time = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(res
  * @typedef {"hit" | "skip" | "extra"} CardType
  * @typedef {{ x: number, y: number }} Point
  */
+
+/**
+ * @param {Point} a
+ * @param {Point} b
+ */
+function dist(a, b) {
+	return Math.sqrt(Math.pow(b.x - a.x, 2) + Math.pow(b.y - a.y, 2))
+}
 
 /**
  * @param {MouseEvent | TouchEvent} event
@@ -69,11 +83,6 @@ class Card {
 		this.elm.classList.add("card")
 		this.elm.setAttribute("style", `background: ${card_types[type].color};`)
 		this.elm.innerText = card_types[type].name
-		var _card = this
-		this.elm.addEventListener("touchstart", (event) => {
-			mouseDownOnCard(_card, getEventLocation(event))
-			event.preventDefault()
-		})
 	}
 	/**
 	 * @param {HTMLElement} newParent
@@ -127,9 +136,11 @@ class Player {
 		var e = document.createElement("div")
 		e.classList.add("player")
 		e.innerHTML = `<div class="card-slot rider-slot"></div><div class="piles"></div><div class="name"></div>`
-		e.setAttribute("style", `--bg-color: hsl(${Math.random() * 360}deg, 40%, 50%);`)
+		e.setAttribute("style", `--bg-color: hsl(${Math.random() * 360}deg, 40%, 70%);`)
+		if (this.name == my_name) e.setAttribute("style", `--bg-color: hsl(${Math.random() * 360}deg, 100%, 50%);`)
 		// Player name
 		e.children[2].textContent = this.name
+		if (this.name == my_name) e.appendChild(document.createElement("b")).innerHTML = "(You)"
 		// Add piles
 		for (var i = 0; i < this.piles.length; i++) {
 			var slot = document.createElement("div")
@@ -157,6 +168,8 @@ class Player {
 /** @type {Player[]} */
 var players = []
 
+function getMe() { var p = players.find((v) => v.name == my_name); if (p == undefined) throw new Error("Player not found"); return p; }
+
 socket.addEventListener("message", (e) => {
 	/** @type {{ type: "CreatePlayer", name: string, piles: CardType[][], rider: null | { rider: CardType, extras: CardType[] } } | { type: "Disconnected" }} */
 	var data = JSON.parse(e.data)
@@ -174,8 +187,9 @@ socket.addEventListener("message", (e) => {
 /**
  * @param {Card} card
  * @param {Point} loc
+ * @param {number} pileIndex
  */
-function mouseDownOnCard(card, loc) {
+function mouseDownOnCard(card, loc, pileIndex) {
 	card.elm.removeAttribute("style")
 	var origin = card.elm.getBoundingClientRect()
 	card.elm.classList.add("remove-normal-transitions")
@@ -228,11 +242,14 @@ function mouseDownOnCard(card, loc) {
 			}
 		}
 		document.body.removeEventListener("mousemove", mouseMoveFromEvent)
-		// @ts-ignore passive doesn't exist (?)
-		document.body.removeEventListener("touchmove", mouseMoveFromEvent, { passive: false })
+		document.body.removeEventListener("touchmove", mouseMoveFromEvent)
 		document.body.removeEventListener("mouseup", mouseUp)
-		// @ts-ignore passive doesn't exist (?)
-		document.body.removeEventListener("touchend", mouseUp, { passive: false })
+		document.body.removeEventListener("touchend", mouseUp)
+		// Finish dragging the card
+		stillClicking = false
+		frame(2).then(() => {
+			cardDragEnd(card, { x: mousePos.x + origin.x, y: mousePos.y + origin.y }, pileIndex)
+		})
 	}
 	// Start!
 	document.body.addEventListener("mousemove", mouseMoveFromEvent)
@@ -240,4 +257,52 @@ function mouseDownOnCard(card, loc) {
 	document.body.addEventListener("mouseup", mouseUp)
 	document.body.addEventListener("touchend", mouseUp, { passive: false })
 	tick()
+}
+
+document.body.addEventListener("touchstart", (event) => {
+	var me = getMe()
+	/** @type {Point[]} */
+	var pile_locations = me.piles.map((v) => v[0].elm.getBoundingClientRect()).map((v) => ({
+		x: v.x + (v.width / 2),
+		y: v.y + (v.height / 2)
+	}))
+	var distances = pile_locations.map((v) => dist(getEventLocation(event), v))
+	var minDistI = distances.findIndex((v) => v == Math.min(...distances))
+	if (distances[minDistI] < 130) {
+		// close enough to one of the piles
+		var pile = me.piles[minDistI]
+		var card = pile[pile.length - 1]
+		mouseDownOnCard(card, getEventLocation(event), minDistI)
+	}
+	event.preventDefault()
+}, { passive: false })
+
+/**
+ * @param {Card} card
+ * @param {Point} mousePos
+ * @param {number} pileIndex
+ */
+function cardDragEnd(card, mousePos, pileIndex) {
+	// find closest player to release point
+	/** @type {Point[]} */
+	var player_locations = players.map((v) => v.element.getBoundingClientRect()).map((v) => ({
+		x: v.x + (v.width / 2),
+		y: v.y + (v.height / 2)
+	}));
+	// (testing code to see where the locations are)
+	// [...player_locations, mousePos].forEach((v) => {
+	// 	var e = document.createElement("div")
+	// 	e.setAttribute("style", `position: absolute; top: ${v.y}px; left: ${v.x}px; outline: 1em solid black;`)
+	// 	document.body.appendChild(e)
+	// })
+	var distances = player_locations.map((v) => dist(mousePos, v))
+	var closestPlayer = players[distances.findIndex((v) => v == Math.min(...distances))]
+	// if we released on ourself, reset the card
+	if (closestPlayer == getMe()) {
+		card.elm.classList.remove("remove-normal-transitions")
+		card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
+		return
+	}
+	// Otherwise send a play-card message to the server
+	alert(["play card!", pileIndex, closestPlayer.name].join(" "))
 }
