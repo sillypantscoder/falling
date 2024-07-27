@@ -1,3 +1,20 @@
+const query = (() => {
+	/** @type {Object.<string, string>} */
+	var query = {}
+	var url = decodeURIComponent(location.href.replaceAll("+", " "))
+	var things = url.split("?").slice(1).join("?").split("#")[0].split("&")
+	if (Boolean(things[0])) {
+		for (var a = 0; a < things.length; a++) {
+			var name =  things[a].split("=")[0]
+			var value = things[a].split("=")[1]
+			query[name] = value
+		}
+	} else {
+		query = {}
+	}
+	return query
+})();
+
 var socket = new WebSocket(`wss://${location.hostname}:8774/`)
 socket.addEventListener("error", (e) => {
 	console.log(e)
@@ -13,7 +30,7 @@ socket.addEventListener("close", () => {
 	alert("Lost connection with the server! Refresh to re-join the game.")
 })
 
-var my_name = "me1"
+var my_name = query.name ?? prompt("Enter your name...")
 
 var gid = (/** @type {string} */ id) => document.getElementById(id)
 var frame = async (/** @type {number} */ n) => {
@@ -36,7 +53,7 @@ var time = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(res
 })();
 
 /**
- * @typedef {"hit" | "skip" | "extra"} CardType
+ * @typedef {"hit" | "extra" | "ground"} CardType
  * @typedef {{ x: number, y: number }} Point
  */
 
@@ -69,8 +86,9 @@ function getEventLocation(event) {
 /** @type {Object.<string, { name: string, color: string }>} */
 var card_types = {
 	"hit": { "name": "Hit", "color": "#F88" },
-	"skip": { "name": "Skip", "color": "#0FF" },
-	"extra": { "name": "Extra", "color": "#5F5" }
+	// "skip": { "name": "Skip", "color": "#0FF" },
+	"extra": { "name": "Extra", "color": "#5F5" },
+	"ground": { "name": "GND", "color": "#888" }
 }
 
 class Card {
@@ -347,7 +365,9 @@ document.body.addEventListener("touchstart", (event) => {
 		var pile = me.piles[minDistI]
 		if (pile.length > 0) {
 			var card = pile[pile.length - 1]
-			mouseDownOnCard(card, getEventLocation(event), minDistI)
+			if (card.type != "ground") {
+				mouseDownOnCard(card, getEventLocation(event), minDistI)
+			}
 		}
 	}
 	event.preventDefault()

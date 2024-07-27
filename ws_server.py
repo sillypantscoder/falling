@@ -60,6 +60,11 @@ class ExtraCard(Card):
 	def getID() -> str:
 		return "extra"
 
+class GroundCard(Card):
+	@staticmethod
+	def getID() -> str:
+		return "ground"
+
 class RiderType(typing.TypedDict):
 	rider: RiderCard
 	extras: list[ExtraCard]
@@ -170,7 +175,10 @@ class Game:
 			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
 			c.disconnect()
 	def dealCards(self):
-		while len(self.deck) > 0:
+		extraTurns = 100
+		while extraTurns > 0:
+			if len(self.deck) == 0:
+				extraTurns -= 1
 			# Do turn
 			turn = self.players[self.turn]
 			if turn.rider == None:
@@ -184,10 +192,13 @@ class Game:
 			if self.turn >= len(self.players):
 				self.turn = 0
 	def dealCard(self, player: Player, pileIndex: int):
-		if len(self.deck) == 0:
-			# TODO: Deal ground cards
+		card = GroundCard()
+		if len(self.deck) > 0:
+			card = self.deck.pop()
+		elif len(player.piles[pileIndex]) == 0:
+			pass
+		elif isinstance(player.piles[pileIndex][-1], GroundCard):
 			return
-		card = self.deck.pop()
 		player.piles[pileIndex].append(card)
 		self.broadcast(json.dumps({
 			"type": "DealCard",
@@ -195,7 +206,7 @@ class Game:
 			"pile": pileIndex,
 			"card": card.getID()
 		}))
-		time.sleep(1)
+		time.sleep(0.5)
 
 g = Game()
 threading.Thread(target=g.dealCards, name="dealer", args=()).start()
@@ -207,3 +218,4 @@ server.run()
 
 # stop the dealing thread
 g.deck = []
+print()
