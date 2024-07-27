@@ -71,7 +71,7 @@ server: WSServer = WSServer(8774)
 class Game:
 	def __init__(self):
 		self.players: list[Player] = [
-			Player(self, f"me{i}") for i in range(10)
+			Player(self, f"me{i + 1}") for i in range(4)
 		]
 		self.deck = []
 		self.populateDeck()
