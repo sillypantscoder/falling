@@ -10,6 +10,7 @@ socket.addEventListener("open", () => {
 })
 socket.addEventListener("close", () => {
 	console.error("Warning! Websocket is disconnected!")
+	alert("Lost connection with the server! Refresh to re-join the game.")
 })
 
 var my_name = "me1"
@@ -86,13 +87,18 @@ class Card {
 	}
 	/**
 	 * @param {HTMLElement} newParent
+	 * @param {InsertPosition} location
 	 */
-	animateMove(newParent) {
+	animateMove(newParent, location) {
 		var card = this.elm
+		// Find old location
 		var oldLocation = card.getBoundingClientRect()
+		card.removeAttribute("style")
 		card.classList.add("remove-normal-transitions")
+		// Move element to new location
 		card.remove()
-		newParent.appendChild(card)
+		newParent.insertAdjacentElement(location, card)
+		// Get new location
 		var newLocation = card.getBoundingClientRect()
 		var difference = {
 			x: oldLocation.x - newLocation.x,
@@ -168,10 +174,14 @@ class Player {
 /** @type {Player[]} */
 var players = []
 
-function getMe() { var p = players.find((v) => v.name == my_name); if (p == undefined) throw new Error("Player not found"); return p; }
+/**
+ * @param {string} name
+ */
+function getPlayerFromName(name) { var p = players.find((v) => v.name == name); if (p == undefined) throw new Error(`Player '${name}' not found`); return p; }
+function getMe() { return getPlayerFromName(my_name) }
 
 socket.addEventListener("message", (e) => {
-	/** @type {{ type: "CreatePlayer", name: string, piles: CardType[][], rider: null | { rider: CardType, extras: CardType[] } } | { type: "Disconnected" }} */
+	/** @type {{ type: "CreatePlayer", name: string, piles: CardType[][], rider: null | { rider: CardType, extras: CardType[] } } | { type: "PlayRider", playerFrom: string, fromPile: number, playerTo: string } | { type: "RevertCard", pile: number }} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -180,6 +190,27 @@ socket.addEventListener("message", (e) => {
 			data.rider == null ? null : { rider: new Card(data.rider.rider), extras: data.rider.extras.map((c) => new Card(c)) }
 		)
 		players.push(newPlayer)
+	} else if (data.type == "PlayRider") {
+		// Get data from server
+		var playerFrom = getPlayerFromName(data.playerFrom)
+		var playerTo = getPlayerFromName(data.playerTo)
+		var pile = playerFrom.piles[data.fromPile]
+		var card = pile[pile.length - 1]
+		// Animate movement
+		var newParent = playerTo.element.children[0]
+		if (! (newParent instanceof HTMLElement)) throw new Error();
+		card.animateMove(newParent, "afterbegin")
+		// Structural movement
+		pile.splice(pile.length - 1, 1)
+		playerTo.rider = {
+			rider: card,
+			extras: []
+		}
+	} else if (data.type == "RevertCard") {
+		getMe().piles[data.pile].forEach((card) => {
+			card.elm.classList.remove("remove-normal-transitions")
+			card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
+		})
 	} else {
 		console.warn("Unknown message recieved...", data)
 	}
@@ -262,7 +293,7 @@ function mouseDownOnCard(card, loc, pileIndex) {
 document.body.addEventListener("touchstart", (event) => {
 	var me = getMe()
 	/** @type {Point[]} */
-	var pile_locations = me.piles.map((v) => v[0].elm.getBoundingClientRect()).map((v) => ({
+	var pile_locations = me.piles.map((v, i) => me.element.children[1].children[i].getBoundingClientRect()).map((v) => ({
 		x: v.x + (v.width / 2),
 		y: v.y + (v.height / 2)
 	}))
@@ -271,8 +302,10 @@ document.body.addEventListener("touchstart", (event) => {
 	if (distances[minDistI] < 130) {
 		// close enough to one of the piles
 		var pile = me.piles[minDistI]
-		var card = pile[pile.length - 1]
-		mouseDownOnCard(card, getEventLocation(event), minDistI)
+		if (pile.length > 0) {
+			var card = pile[pile.length - 1]
+			mouseDownOnCard(card, getEventLocation(event), minDistI)
+		}
 	}
 	event.preventDefault()
 }, { passive: false })
@@ -297,12 +330,10 @@ function cardDragEnd(card, mousePos, pileIndex) {
 	// })
 	var distances = player_locations.map((v) => dist(mousePos, v))
 	var closestPlayer = players[distances.findIndex((v) => v == Math.min(...distances))]
-	// if we released on ourself, reset the card
-	if (closestPlayer == getMe()) {
-		card.elm.classList.remove("remove-normal-transitions")
-		card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
-		return
-	}
-	// Otherwise send a play-card message to the server
-	alert(["play card!", pileIndex, closestPlayer.name].join(" "))
+	// Send a play-card message to the server
+	socket.send(JSON.stringify({
+		type: "PlayCard",
+		pileIndex,
+		target: closestPlayer.name
+	}))
 }

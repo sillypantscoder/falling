@@ -6,7 +6,7 @@ import random
 class Card:
 	def canPlay(self, playerFrom: "Player", playerTo: "Player") -> bool:
 		return False
-	def play(self, playerFrom: "Player", playerTo: "Player"):
+	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
 		pass
 	@staticmethod
 	def getID() -> str:
@@ -15,11 +15,17 @@ class Card:
 class RiderCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
 		return playerTo.rider == None
-	def play(self, playerFrom: "Player", playerTo: "Player"):
+	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
 		playerTo.rider = {
 			"rider": self,
 			"extras": []
 		}
+		playerTo.game.broadcast(json.dumps({
+			"type": "PlayRider",
+			"playerFrom": playerFrom.name,
+			"fromPile": pileIndex,
+			"playerTo": playerTo.name
+		}))
 	def deal(self, player: "Player", amount: int):
 		for _ in range(amount):
 			[player.game.deal(pile) for pile in player.piles]
@@ -34,7 +40,7 @@ class HitCard(RiderCard):
 class ExtraCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
 		return playerTo.rider != None
-	def play(self, playerFrom: "Player", playerTo: "Player"):
+	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
 		if playerTo.rider != None:
 			playerTo.rider["extras"].append(self)
 	@staticmethod
@@ -52,7 +58,8 @@ class Player:
 		self.client: Client | None = None
 		self.piles: list[list[Card]] = [
 			[
-				HitCard() for _ in range(random.choice([0, 1, 2, 3]))
+				random.choice([HitCard(), ExtraCard()])
+				for _ in range(random.choice([0, 1, 2, 3]))
 			]
 			for _ in range(random.choice([1, 2]))
 		]
@@ -74,7 +81,7 @@ server: WSServer = WSServer(8774)
 class Game:
 	def __init__(self):
 		self.players: list[Player] = [
-			Player(self, f"me{i + 1}") for i in range(4)
+			Player(self, f"me{i + 1}") for i in range(6)
 		]
 		self.deck = []
 		self.populateDeck()
@@ -126,6 +133,26 @@ class Game:
 				newPlayer = Player(self, msg["name"])
 				self.players.append(newPlayer)
 				self.broadcast(newPlayer.getCreationMessage())
+		elif msg["type"] == "PlayCard":
+			playerFrom = self.findPlayerFromClient(c)
+			if playerFrom == None:
+				print(f'ERROR: client {c.id} cannot play a card as they are not logged in')
+				return
+			pileIndex: int = msg["pileIndex"]
+			playerTo = self.findPlayerFromName(msg["target"])
+			if playerTo == None:
+				print(f'ERROR: client {c.id} cannot play a card to unknown player {msg["target"]}')
+				return
+			# Play the card!
+			card = playerFrom.piles[pileIndex][-1]
+			if not card.canPlay(playerFrom, playerTo):
+				c.sendMessage(json.dumps({
+					"type": "RevertCard",
+					"pile": pileIndex
+				}))
+				return
+			playerFrom.piles[pileIndex].remove(card)
+			card.play(playerFrom, pileIndex, playerTo)
 		else:
 			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
 			c.disconnect()
