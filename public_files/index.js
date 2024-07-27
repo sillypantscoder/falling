@@ -53,7 +53,6 @@ var time = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(res
 })();
 
 /**
- * @typedef {"hit" | "extra" | "ground"} CardType
  * @typedef {{ x: number, y: number }} Point
  */
 
@@ -83,10 +82,14 @@ function getEventLocation(event) {
 	}
 }
 
-/** @type {Object.<string, { name: string, color: string }>} */
+/**
+ * @typedef {"hit" | "skip" | "split" | "extra" | "ground"} CardType
+ * @type {Object.<string, { name: string, color: string }>}
+ */
 var card_types = {
 	"hit": { "name": "Hit", "color": "#F88" },
-	// "skip": { "name": "Skip", "color": "#0FF" },
+	"skip": { "name": "Skip", "color": "#0FF" },
+	"split": { "name": "Split", "color": "#B9F" },
 	"extra": { "name": "Extra", "color": "#5F5" },
 	"ground": { "name": "GND", "color": "#888" }
 }
@@ -204,10 +207,12 @@ function getMe() { return getPlayerFromName(my_name) }
  * @typedef {{ type: "PlayRider", playerFrom: string, fromPile: number, playerTo: string }} PlayRiderMessageType
  * @typedef {{ type: "RevertCard", pile: number }} RevertCardMessageType
  * @typedef {{ type: "DealCard", player: string, pile: number, card: CardType }} DealCardMessageType
- * @typedef {{ type: "RemoveRider", player: string }} RemoveRiderMessageType
+ * @typedef {{ type: "RemoveRider", player: string, justOneExtra: boolean }} RemoveRiderMessageType
+ * @typedef {{ type: "NewPile", player: string }} NewPileMessageType
+ * @typedef {{ type: "RemovePile", player: string, pile: number }} RemovePileMessageType
  */
 socket.addEventListener("message", (e) => {
-	/** @type {CreatePlayerMessageType | PlayRiderMessageType | RevertCardMessageType | DealCardMessageType | RemoveRiderMessageType} */
+	/** @type {CreatePlayerMessageType | PlayRiderMessageType | RevertCardMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -258,7 +263,11 @@ socket.addEventListener("message", (e) => {
 		if (player.rider == null) return;
 		var riderElms = [player.rider.rider.elm, ...player.rider.extras.map((v) => v.elm)]
 		var riderColors = [player.rider.rider.getColor(), ...player.rider.extras.map((v) => v.getColor())]
-		player.rider = null
+		if (data.justOneExtra) {
+			riderElms = [player.rider.extras[player.rider.extras.length - 1].elm]
+			riderColors = [player.rider.extras[player.rider.extras.length - 1].getColor()]
+			player.rider.extras.pop()
+		} else player.rider = null
 		// Animate movement
 		riderElms.forEach((v, i) => {
 			v.classList.remove("remove-normal-transitions")
@@ -272,6 +281,14 @@ socket.addEventListener("message", (e) => {
 				v.remove()
 			})
 		})
+	} else if (data.type == "NewPile") {
+		var player = getPlayerFromName(data.player)
+		player.piles.push([])
+		player.element.children[1].appendChild(document.createElement("div")).classList.add("card-slot")
+	} else if (data.type == "RemovePile") {
+		var player = getPlayerFromName(data.player)
+		player.piles.splice(data.pile, 1)
+		player.element.children[1].children[data.pile].remove()
 	} else {
 		console.warn("Unknown message recieved...", data)
 	}

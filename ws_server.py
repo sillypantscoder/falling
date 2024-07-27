@@ -33,7 +33,8 @@ class RiderCard(Card):
 			[player.game.dealCard(player, pileIndex) for pileIndex in range(len(player.piles))]
 		player.game.broadcast(json.dumps({
 			"type": "RemoveRider",
-			"player": player.name
+			"player": player.name,
+			"justOneExtra": False
 		}))
 		player.rider = None
 
@@ -43,6 +44,41 @@ class HitCard(RiderCard):
 	@staticmethod
 	def getID() -> str:
 		return "hit"
+
+class SkipCard(RiderCard):
+	def deal(self, player: "Player", amount: int):
+		if amount == 1:
+			# Remove Skip card
+			player.game.broadcast(json.dumps({
+				"type": "RemoveRider",
+				"player": player.name,
+				"justOneExtra": False
+			}))
+			player.rider = None
+		elif player.rider != None:
+			# Remove just an extra
+			player.game.broadcast(json.dumps({
+				"type": "RemoveRider",
+				"player": player.name,
+				"justOneExtra": True
+			}))
+			player.rider["extras"].pop()
+	@staticmethod
+	def getID() -> str:
+		return "skip"
+
+class SplitCard(RiderCard):
+	def deal(self, player: "Player", amount: int):
+		for _ in range(amount):
+			player.piles.append([])
+			player.game.broadcast(json.dumps({
+				"type": "NewPile",
+				"player": player.name
+			}))
+		super().deal(player, 1)
+	@staticmethod
+	def getID() -> str:
+		return "split"
 
 class ExtraCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
@@ -74,17 +110,8 @@ class Player:
 		self.game = game
 		self.name = name
 		self.client: Client | None = None
-		self.piles: list[list[Card]] = [
-			[
-				random.choice([HitCard(), ExtraCard()])
-				for _ in range(random.choice([0, 1, 2, 3]))
-			]
-			for _ in range(random.choice([1, 2]))
-		]
-		self.rider: RiderType | None = None if random.choice([True, False]) else {
-			"rider": HitCard(),
-			"extras": [ExtraCard() for _ in range(random.choice([0, 0, 0, 0, 1, 2]))]
-		}
+		self.piles: list[list[Card]] = [[]]
+		self.rider: RiderType | None = None
 	def getCreationMessage(self):
 		return json.dumps({
 			"type": "CreatePlayer",
@@ -106,6 +133,8 @@ class Game:
 	def populateDeck(self):
 		self.deck = [
 			*[HitCard() for _ in range(50)],
+			*[SkipCard() for _ in range(50)],
+			*[SplitCard() for _ in range(30)],
 			*[ExtraCard() for _ in range(30)]
 		]
 		random.shuffle(self.deck)
@@ -171,6 +200,14 @@ class Game:
 				return
 			playerFrom.piles[pileIndex].remove(card)
 			card.play(playerFrom, pileIndex, playerTo)
+			# Remove the pile if necessary
+			if len(playerFrom.piles[pileIndex]) == 0:
+				playerFrom.piles.pop(pileIndex)
+				self.broadcast(json.dumps({
+					"type": "RemovePile",
+					"player": playerFrom.name,
+					"pile": pileIndex
+				}))
 		else:
 			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
 			c.disconnect()
@@ -181,6 +218,14 @@ class Game:
 				extraTurns -= 1
 			# Do turn
 			turn = self.players[self.turn]
+			# - Make sure there is at least one pile
+			if len(turn.piles) == 0:
+				turn.piles.append([])
+				self.broadcast(json.dumps({
+					"type": "NewPile",
+					"player": turn.name
+				}))
+			# - Deal cards depending on rider
 			if turn.rider == None:
 				for pileIndex in range(len(turn.piles)):
 					self.dealCard(turn, pileIndex)
@@ -192,13 +237,17 @@ class Game:
 			if self.turn >= len(self.players):
 				self.turn = 0
 	def dealCard(self, player: Player, pileIndex: int):
+		# - Find which card to use
 		card = GroundCard()
 		if len(self.deck) > 0:
+			# (get card from deck)
 			card = self.deck.pop()
-		elif len(player.piles[pileIndex]) == 0:
-			pass
-		elif isinstance(player.piles[pileIndex][-1], GroundCard):
-			return
+		else:
+			# (special case to skip this player if
+			#  they have a ground card)
+			if len(player.piles[pileIndex]) > 0 and isinstance(player.piles[pileIndex][-1], GroundCard):
+				return
+		# - Add the card
 		player.piles[pileIndex].append(card)
 		self.broadcast(json.dumps({
 			"type": "DealCard",
@@ -206,6 +255,7 @@ class Game:
 			"pile": pileIndex,
 			"card": card.getID()
 		}))
+		# - Dealing speed
 		time.sleep(0.5)
 
 g = Game()
