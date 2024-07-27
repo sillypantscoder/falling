@@ -29,14 +29,15 @@ class RiderCard(Card):
 			"playerTo": playerTo.name
 		}))
 	def deal(self, player: "Player", amount: int):
-		for _ in range(amount):
-			[player.game.dealCard(player, pileIndex) for pileIndex in range(len(player.piles))]
 		player.game.broadcast(json.dumps({
 			"type": "RemoveRider",
 			"player": player.name,
 			"justOneExtra": False
 		}))
 		player.rider = None
+		# Deal
+		for _ in range(amount):
+			[player.game.dealCard(player, pileIndex) for pileIndex in range(len(player.piles))]
 
 class HitCard(RiderCard):
 	def deal(self, player: "Player", amount: int):
@@ -63,6 +64,7 @@ class SkipCard(RiderCard):
 				"justOneExtra": True
 			}))
 			player.rider["extras"].pop()
+		time.sleep(2.0 / len(player.game.players))
 	@staticmethod
 	def getID() -> str:
 		return "skip"
@@ -124,9 +126,7 @@ server: WSServer = WSServer(8774)
 
 class Game:
 	def __init__(self):
-		self.players: list[Player] = [
-			Player(self, f"me{i + 1}") for i in range(6)
-		]
+		self.players: list[Player] = []
 		self.deck = []
 		self.populateDeck()
 		self.turn = 0
@@ -147,7 +147,6 @@ class Game:
 			if p.name == c:
 				return p
 	def broadcast(self, msg: str):
-		# Send game state
 		for p in self.players:
 			if p.client != None:
 				p.client.sendMessage(msg)
@@ -179,6 +178,7 @@ class Game:
 				# Create a new player
 				newPlayer = Player(self, msg["name"])
 				self.players.append(newPlayer)
+				newPlayer.client = c
 				self.broadcast(newPlayer.getCreationMessage())
 		elif msg["type"] == "PlayCard":
 			playerFrom = self.findPlayerFromClient(c)
@@ -192,6 +192,8 @@ class Game:
 				return
 			# Play the card!
 			card = playerFrom.piles[pileIndex][-1]
+			if card.getID() != msg["card"]:
+				return
 			if not card.canPlay(playerFrom, playerTo):
 				c.sendMessage(json.dumps({
 					"type": "RevertCard",
@@ -212,6 +214,11 @@ class Game:
 			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
 			c.disconnect()
 	def dealCards(self):
+		# Wait for player login
+		while len(self.players) < 2:
+			time.sleep(0.3)
+		input("Press Enter to start dealing")
+		# Start
 		extraTurns = 100
 		while extraTurns > 0:
 			if len(self.deck) == 0:
@@ -248,6 +255,7 @@ class Game:
 			if len(player.piles[pileIndex]) > 0 and isinstance(player.piles[pileIndex][-1], GroundCard):
 				return
 		# - Add the card
+		if pileIndex >= len(player.piles): return
 		player.piles[pileIndex].append(card)
 		self.broadcast(json.dumps({
 			"type": "DealCard",
@@ -256,7 +264,7 @@ class Game:
 			"card": card.getID()
 		}))
 		# - Dealing speed
-		time.sleep(0.5)
+		time.sleep(2.0 / len(self.players))
 
 g = Game()
 threading.Thread(target=g.dealCards, name="dealer", args=()).start()

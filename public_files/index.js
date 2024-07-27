@@ -84,14 +84,14 @@ function getEventLocation(event) {
 
 /**
  * @typedef {"hit" | "skip" | "split" | "extra" | "ground"} CardType
- * @type {Object.<string, { name: string, color: string }>}
+ * @type {Object.<string, { name: string, color: string, playOn: { s: boolean, o: boolean } }>}
  */
 var card_types = {
-	"hit": { "name": "Hit", "color": "#F88" },
-	"skip": { "name": "Skip", "color": "#0FF" },
-	"split": { "name": "Split", "color": "#B9F" },
-	"extra": { "name": "Extra", "color": "#5F5" },
-	"ground": { "name": "GND", "color": "#888" }
+	"hit": { name: "Hit", color: "#F88", playOn: { s: false, o: true } },
+	"skip": { name: "Skip", color: "#0FF", playOn: { s: true, o: false } },
+	"split": { name: "Split", color: "#B9F", playOn: { s: false, o: true } },
+	"extra": { name: "Extra", color: "#5F5", playOn: { s: true, o: true } },
+	"ground": { name: "GND", color: "#888", playOn: { s: false, o: false } }
 }
 
 class Card {
@@ -293,6 +293,7 @@ socket.addEventListener("message", (e) => {
 		console.warn("Unknown message recieved...", data)
 	}
 })
+
 /**
  * @param {Card} card
  * @param {Point} loc
@@ -341,7 +342,7 @@ function mouseDownOnCard(card, loc, pileIndex) {
 	mouseMove(loc)
 	// Set up mouse up listener
 	/**
-	 * @param {MouseEvent | TouchEvent} event
+	 * @param {MouseEvent | TouchEvent | null} event
 	 */
 	function mouseUp(event) {
 		if (event instanceof MouseEvent) {
@@ -414,6 +415,47 @@ function cardDragEnd(card, mousePos, pileIndex) {
 	socket.send(JSON.stringify({
 		type: "PlayCard",
 		pileIndex,
+		card: card.type,
 		target: closestPlayer.name
 	}))
+	// Start reverting the card...
+	card.elm.classList.remove("remove-normal-transitions")
+	card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
 }
+
+(() => {
+	if (query.bot != "true") return;
+	// Bot mode!
+	function tick() {
+		// 1. Check if we have any ground cards
+		try {
+			var me = getMe()
+		} catch {
+			return
+		}
+		if (me.piles.find((v) => v.find((c) => c.type=="ground") != null) != null) {
+			clearInterval(id)
+			return
+		}
+		// 2. Try to play a card
+		//    a. Pick a random card
+		var pile = Math.floor(Math.random() * me.piles.length)
+		var card = me.piles[pile][me.piles[pile].length - 1]
+		if (card == undefined) return
+		//    b. Pick a random player
+		var targetPlayer = players[Math.floor(Math.random() * players.length)]
+		//    c. Determine whether this is a good idea
+		var playOn = card_types[card.type].playOn
+		var validPlay = targetPlayer==me ? playOn.s : playOn.o
+		//    d. Play the card
+		if (validPlay) {
+			socket.send(JSON.stringify({
+				type: "PlayCard",
+				pileIndex: pile,
+				card: card.type,
+				target: targetPlayer.name
+			}))
+		}
+	}
+	var id = setInterval(tick, 1000)
+})();
