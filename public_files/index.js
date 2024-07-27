@@ -204,15 +204,14 @@ function getMe() { return getPlayerFromName(my_name) }
 
 /**
  * @typedef {{ type: "CreatePlayer", name: string, piles: CardType[][], rider: null | { rider: CardType, extras: CardType[] } }} CreatePlayerMessageType
- * @typedef {{ type: "PlayRider", playerFrom: string, fromPile: number, playerTo: string }} PlayRiderMessageType
- * @typedef {{ type: "RevertCard", pile: number }} RevertCardMessageType
+ * @typedef {{ type: "PlayRider", playerFrom: string, fromPile: number, cardIndex: number, playerTo: string }} PlayRiderMessageType
  * @typedef {{ type: "DealCard", player: string, pile: number, card: CardType }} DealCardMessageType
  * @typedef {{ type: "RemoveRider", player: string, justOneExtra: boolean }} RemoveRiderMessageType
  * @typedef {{ type: "NewPile", player: string }} NewPileMessageType
  * @typedef {{ type: "RemovePile", player: string, pile: number }} RemovePileMessageType
  */
 socket.addEventListener("message", (e) => {
-	/** @type {CreatePlayerMessageType | PlayRiderMessageType | RevertCardMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType} */
+	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -226,13 +225,13 @@ socket.addEventListener("message", (e) => {
 		var playerFrom = getPlayerFromName(data.playerFrom)
 		var playerTo = getPlayerFromName(data.playerTo)
 		var pile = playerFrom.piles[data.fromPile]
-		var card = pile[pile.length - 1]
+		var card = pile[data.cardIndex]
 		// Animate movement
 		var newParent = playerTo.element.children[0]
 		if (! (newParent instanceof HTMLElement)) throw new Error();
 		card.animateMove(newParent, "afterbegin")
 		// Structural movement
-		pile.splice(pile.length - 1, 1)
+		pile.splice(data.cardIndex, 1)
 		if (playerTo.rider == null) {
 			playerTo.rider = {
 				rider: card,
@@ -241,11 +240,6 @@ socket.addEventListener("message", (e) => {
 		} else {
 			playerTo.rider.extras.push(card)
 		}
-	} else if (data.type == "RevertCard") {
-		getMe().piles[data.pile].forEach((card) => {
-			card.elm.classList.remove("remove-normal-transitions")
-			card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
-		})
 	} else if (data.type == "DealCard") {
 		var player = getPlayerFromName(data.player)
 		var pile = player.piles[data.pile]
@@ -295,11 +289,19 @@ socket.addEventListener("message", (e) => {
 })
 
 /**
- * @param {Card} card
+ * @param {number} pile
  * @param {Point} loc
  * @param {number} pileIndex
  */
-function mouseDownOnCard(card, loc, pileIndex) {
+function mouseDownOnCard(pile, loc, pileIndex) {
+	var me = getMe()
+	var card = me.piles[pile][me.piles[pile].length - 1]
+	// Notify server
+	socket.send(JSON.stringify({
+		type: "GrabCard",
+		pileIndex
+	}))
+	// Animation
 	card.elm.removeAttribute("style")
 	var origin = card.elm.getBoundingClientRect()
 	card.elm.classList.add("remove-normal-transitions")
@@ -309,6 +311,10 @@ function mouseDownOnCard(card, loc, pileIndex) {
 	/** @type {Point} */
 	var mousePos = { x: 0, y: 0 }
 	var stillClicking = true
+	var timeoutID = setTimeout(() => {
+		stillClicking = false
+		mouseUp(null)
+	}, 1500)
 	// Set up ticker
 	function tick() {
 		const easing = 5
@@ -345,6 +351,7 @@ function mouseDownOnCard(card, loc, pileIndex) {
 	 * @param {MouseEvent | TouchEvent | null} event
 	 */
 	function mouseUp(event) {
+		clearTimeout(timeoutID)
 		if (event instanceof MouseEvent) {
 			mousePos = {
 				x: (event.clientX - origin.x) - (origin.width / 2),
@@ -356,9 +363,21 @@ function mouseDownOnCard(card, loc, pileIndex) {
 		document.body.removeEventListener("mouseup", mouseUp)
 		document.body.removeEventListener("touchend", mouseUp)
 		// Finish dragging the card
+		if (stillClicking) {
+			frame(2).then(() => {
+				cardDragEnd(card, { x: mousePos.x + origin.x, y: mousePos.y + origin.y })
+			})
+		} else {
+			socket.send(JSON.stringify({
+				type: "PlayCard",
+				target: null
+			}))
+		}
 		stillClicking = false
 		frame(2).then(() => {
-			cardDragEnd(card, { x: mousePos.x + origin.x, y: mousePos.y + origin.y }, pileIndex)
+			// Start reverting the card...
+			card.elm.classList.remove("remove-normal-transitions")
+			card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
 		})
 	}
 	// Start!
@@ -368,7 +387,6 @@ function mouseDownOnCard(card, loc, pileIndex) {
 	document.body.addEventListener("touchend", mouseUp, { passive: false })
 	tick()
 }
-
 document.body.addEventListener("touchstart", (event) => {
 	var me = getMe()
 	/** @type {Point[]} */
@@ -378,13 +396,13 @@ document.body.addEventListener("touchstart", (event) => {
 	}))
 	var distances = pile_locations.map((v) => dist(getEventLocation(event), v))
 	var minDistI = distances.findIndex((v) => v == Math.min(...distances))
-	if (distances[minDistI] < 130) {
+	if (distances[minDistI] < 200) {
 		// close enough to one of the piles
 		var pile = me.piles[minDistI]
 		if (pile.length > 0) {
 			var card = pile[pile.length - 1]
 			if (card.type != "ground") {
-				mouseDownOnCard(card, getEventLocation(event), minDistI)
+				mouseDownOnCard(minDistI, getEventLocation(event), minDistI)
 			}
 		}
 	}
@@ -394,9 +412,8 @@ document.body.addEventListener("touchstart", (event) => {
 /**
  * @param {Card} card
  * @param {Point} mousePos
- * @param {number} pileIndex
  */
-function cardDragEnd(card, mousePos, pileIndex) {
+function cardDragEnd(card, mousePos) {
 	// find closest player to release point
 	/** @type {Point[]} */
 	var player_locations = players.map((v) => v.element.getBoundingClientRect()).map((v) => ({
@@ -414,13 +431,8 @@ function cardDragEnd(card, mousePos, pileIndex) {
 	// Send a play-card message to the server
 	socket.send(JSON.stringify({
 		type: "PlayCard",
-		pileIndex,
-		card: card.type,
 		target: closestPlayer.name
 	}))
-	// Start reverting the card...
-	card.elm.classList.remove("remove-normal-transitions")
-	card.elm.setAttribute("style", `background: ${card.getColor()}; top: 0; left: 0;`)
 }
 
 (() => {
@@ -450,9 +462,11 @@ function cardDragEnd(card, mousePos, pileIndex) {
 		//    d. Play the card
 		if (validPlay) {
 			socket.send(JSON.stringify({
+				type: "GrabCard",
+				pileIndex: pile
+			}))
+			socket.send(JSON.stringify({
 				type: "PlayCard",
-				pileIndex: pile,
-				card: card.type,
 				target: targetPlayer.name
 			}))
 		}

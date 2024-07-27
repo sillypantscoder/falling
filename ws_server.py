@@ -4,11 +4,12 @@ import typing
 import random
 import threading
 import time
+import datetime
 
 class Card:
 	def canPlay(self, playerFrom: "Player", playerTo: "Player") -> bool:
 		return False
-	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
+	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		pass
 	@staticmethod
 	def getID() -> str:
@@ -17,7 +18,7 @@ class Card:
 class RiderCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
 		return playerTo.rider == None
-	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
+	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		playerTo.rider = {
 			"rider": self,
 			"extras": []
@@ -26,18 +27,20 @@ class RiderCard(Card):
 			"type": "PlayRider",
 			"playerFrom": playerFrom.name,
 			"fromPile": pileIndex,
+			"cardIndex": cardIndex,
 			"playerTo": playerTo.name
 		}))
 	def deal(self, player: "Player", amount: int):
+		# Deal
+		for _ in range(amount):
+			[player.game.dealCard(player, pileIndex) for pileIndex in range(len(player.piles))]
+		# Remove card
 		player.game.broadcast(json.dumps({
 			"type": "RemoveRider",
 			"player": player.name,
 			"justOneExtra": False
 		}))
 		player.rider = None
-		# Deal
-		for _ in range(amount):
-			[player.game.dealCard(player, pileIndex) for pileIndex in range(len(player.piles))]
 
 class HitCard(RiderCard):
 	def deal(self, player: "Player", amount: int):
@@ -48,6 +51,7 @@ class HitCard(RiderCard):
 
 class SkipCard(RiderCard):
 	def deal(self, player: "Player", amount: int):
+		time.sleep(2.0 / len(player.game.players))
 		if amount == 1:
 			# Remove Skip card
 			player.game.broadcast(json.dumps({
@@ -64,7 +68,6 @@ class SkipCard(RiderCard):
 				"justOneExtra": True
 			}))
 			player.rider["extras"].pop()
-		time.sleep(2.0 / len(player.game.players))
 	@staticmethod
 	def getID() -> str:
 		return "skip"
@@ -85,13 +88,14 @@ class SplitCard(RiderCard):
 class ExtraCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
 		return playerTo.rider != None
-	def play(self, playerFrom: "Player", pileIndex: int, playerTo: "Player"):
+	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		if playerTo.rider != None:
 			playerTo.rider["extras"].append(self)
 			playerTo.game.broadcast(json.dumps({
 				"type": "PlayRider",
 				"playerFrom": playerFrom.name,
 				"fromPile": pileIndex,
+				"cardIndex": cardIndex,
 				"playerTo": playerTo.name
 			}))
 	@staticmethod
@@ -107,6 +111,11 @@ class RiderType(typing.TypedDict):
 	rider: RiderCard
 	extras: list[ExtraCard]
 
+class HandType(typing.TypedDict):
+	pickupTime: datetime.datetime
+	pileIndex: int
+	cardIndex: int
+
 class Player:
 	def __init__(self, game: "Game", name: str):
 		self.game = game
@@ -114,6 +123,7 @@ class Player:
 		self.client: Client | None = None
 		self.piles: list[list[Card]] = [[]]
 		self.rider: RiderType | None = None
+		self.hand: HandType | None = None
 	def getCreationMessage(self):
 		return json.dumps({
 			"type": "CreatePlayer",
@@ -180,30 +190,49 @@ class Game:
 				self.players.append(newPlayer)
 				newPlayer.client = c
 				self.broadcast(newPlayer.getCreationMessage())
-		elif msg["type"] == "PlayCard":
+		elif msg["type"] == "GrabCard":
 			playerFrom = self.findPlayerFromClient(c)
 			if playerFrom == None:
 				print(f'ERROR: client {c.id} cannot play a card as they are not logged in')
 				return
 			pileIndex: int = msg["pileIndex"]
+			pile = playerFrom.piles[pileIndex]
+			# Register the card
+			playerFrom.hand = {
+				"pickupTime": datetime.datetime.now(),
+				"pileIndex": pileIndex,
+				"cardIndex": len(pile) - 1
+			}
+		elif msg["type"] == "PlayCard":
+			playerFrom = self.findPlayerFromClient(c)
+			if playerFrom == None:
+				print(f'ERROR: client {c.id} cannot play a card as they are not logged in')
+				return
+			if playerFrom.hand == None:
+				print(f'ERROR: client {c.id} cannot play a card without picking up a card first')
+				return
+			if (datetime.datetime.now() - playerFrom.hand["pickupTime"]).total_seconds() > 1.5:
+				return
+			if msg["target"] == None:
+				return
 			playerTo = self.findPlayerFromName(msg["target"])
 			if playerTo == None:
 				print(f'ERROR: client {c.id} cannot play a card to unknown player {msg["target"]}')
 				return
+			pileIndex = playerFrom.hand["pileIndex"]
+			pile = playerFrom.piles[pileIndex]
 			# Play the card!
-			card = playerFrom.piles[pileIndex][-1]
-			if card.getID() != msg["card"]:
-				return
+			card = pile[playerFrom.hand["cardIndex"]]
 			if not card.canPlay(playerFrom, playerTo):
 				c.sendMessage(json.dumps({
 					"type": "RevertCard",
 					"pile": pileIndex
 				}))
 				return
-			playerFrom.piles[pileIndex].remove(card)
-			card.play(playerFrom, pileIndex, playerTo)
+			pile.remove(card)
+			card.play(playerFrom, pileIndex, playerFrom.hand["cardIndex"], playerTo)
 			# Remove the pile if necessary
-			if len(playerFrom.piles[pileIndex]) == 0:
+			if len(pile) == 0:
 				playerFrom.piles.pop(pileIndex)
 				self.broadcast(json.dumps({
 					"type": "RemovePile",
