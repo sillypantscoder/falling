@@ -83,7 +83,7 @@ function getEventLocation(event) {
 }
 
 /**
- * @typedef {"hit" | "skip" | "split" | "extra" | "ground"} CardType
+ * @typedef {"hit" | "skip" | "split" | "extra" | "stop" | "ground"} CardType
  * @type {Object.<string, { name: string, color: string, playOn: { s: boolean, o: boolean } }>}
  */
 var card_types = {
@@ -91,6 +91,7 @@ var card_types = {
 	"skip": { name: "Skip", color: "#0FF", playOn: { s: true, o: false } },
 	"split": { name: "Split", color: "#B9F", playOn: { s: false, o: true } },
 	"extra": { name: "Extra", color: "#5F5", playOn: { s: true, o: true } },
+	"stop": { name: "Stop", color: "#CC3", playOn: { s: false, o: true } },
 	"ground": { name: "GND", color: "#888", playOn: { s: false, o: false } }
 }
 
@@ -209,9 +210,10 @@ function getMe() { return getPlayerFromName(my_name) }
  * @typedef {{ type: "RemoveRider", player: string, justOneExtra: boolean }} RemoveRiderMessageType
  * @typedef {{ type: "NewPile", player: string }} NewPileMessageType
  * @typedef {{ type: "RemovePile", player: string, pile: number }} RemovePileMessageType
+ * @typedef {{ type: "PlayAndDiscard", playerFrom: string, fromPile: number, cardIndex: number, playerTo: string }} PlayAndDiscardMessageType
  */
 socket.addEventListener("message", (e) => {
-	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType} */
+	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType | PlayAndDiscardMessageType} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -287,6 +289,27 @@ socket.addEventListener("message", (e) => {
 		var player = getPlayerFromName(data.player)
 		player.piles.splice(data.pile, 1)
 		player.element.children[1].children[data.pile].remove()
+	} else if (data.type == "PlayAndDiscard") {
+		// Get data from server
+		var playerFrom = getPlayerFromName(data.playerFrom)
+		var playerTo = getPlayerFromName(data.playerTo)
+		var pile = playerFrom.piles[data.fromPile]
+		var card = pile[data.cardIndex]
+		// Animate movement
+		var newParent = playerTo.element.children[0]
+		if (! (newParent instanceof HTMLElement)) throw new Error();
+		card.animateMove(newParent, "beforeend")
+		frame(3).then(() => {
+			card.elm.setAttribute("style", `background: ${card.getColor()}; top: -0.5em; left: -0.5em;`)
+		})
+		time(400).then(() => {
+			card.elm.setAttribute("style", `background: ${card.getColor()}; top: -20em; left: -0.5em;`)
+		})
+		time(800).then(() => {
+			card.elm.remove()
+		})
+		// Structural movement
+		pile.splice(data.cardIndex, 1)
 	} else {
 		console.warn("Unknown message recieved...", data)
 	}
@@ -439,6 +462,10 @@ function cardDragEnd(card, mousePos) {
 	// })
 	var distances = player_locations.map((v) => dist(mousePos, v))
 	var closestPlayer = players[distances.findIndex((v) => v == Math.min(...distances))]
+	if (closestPlayer == getMe() && mousePos.y > window.innerHeight / 2) return socket.send(JSON.stringify({
+		type: "PlayCard",
+		target: null
+	}))
 	// Send a play-card message to the server
 	socket.send(JSON.stringify({
 		type: "PlayCard",

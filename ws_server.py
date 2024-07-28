@@ -102,6 +102,27 @@ class ExtraCard(Card):
 	def getID() -> str:
 		return "extra"
 
+class StopCard(Card):
+	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
+		return playerTo.rider != None
+	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
+		playerTo.game.broadcast(json.dumps({
+			"type": "PlayAndDiscard",
+			"playerFrom": playerFrom.name,
+			"fromPile": pileIndex,
+			"cardIndex": cardIndex,
+			"playerTo": playerTo.name
+		}))
+		playerTo.game.broadcast(json.dumps({
+			"type": "RemoveRider",
+			"player": playerTo.name,
+			"justOneExtra": False
+		}))
+		playerTo.rider = None
+	@staticmethod
+	def getID() -> str:
+		return "stop"
+
 class GroundCard(Card):
 	@staticmethod
 	def getID() -> str:
@@ -142,10 +163,11 @@ class Game:
 		self.turn = 0
 	def populateDeck(self):
 		self.deck = [
-			*[HitCard() for _ in range(50)],
-			*[SkipCard() for _ in range(50)],
-			*[SplitCard() for _ in range(30)],
-			*[ExtraCard() for _ in range(30)]
+			*[HitCard() for _ in range(40)],
+			*[SkipCard() for _ in range(40)],
+			*[SplitCard() for _ in range(20)],
+			*[ExtraCard() for _ in range(20)],
+			*[StopCard() for _ in range(20)]
 		]
 		random.shuffle(self.deck)
 	def findPlayerFromClient(self, c: Client):
