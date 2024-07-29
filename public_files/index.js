@@ -20,17 +20,19 @@ socket.addEventListener("error", (e) => {
 	console.log(e)
 })
 socket.addEventListener("open", () => {
-	socket.send(JSON.stringify({
-		type: "Login",
-		name: my_name
-	}))
+	if (my_name != undefined && my_name != "") {
+		socket.send(JSON.stringify({
+			type: "Login",
+			name: my_name
+		}))
+	}
 })
 socket.addEventListener("close", () => {
 	console.error("Warning! Websocket is disconnected!")
 	alert("Lost connection with the server! Refresh to re-join the game.")
 })
 
-var my_name = query.name ?? prompt("Enter your name...")
+var my_name = query.name
 
 var gid = (/** @type {string} */ id) => document.getElementById(id)
 var frame = async (/** @type {number} */ n) => {
@@ -164,12 +166,14 @@ class Player {
 	makeElement() {
 		var e = document.createElement("div")
 		e.classList.add("player")
-		e.innerHTML = `<div class="card-slot rider-slot"></div><div class="piles"></div><div class="name"></div>`
+		e.innerHTML = `<div class="card-slot rider-slot"></div><div class="piles"></div><div class="name"></div><div class="ready-btn">Ready!</div>`
 		e.setAttribute("style", `--bg-color: hsl(${Math.random() * 360}deg, 40%, 70%);`)
 		if (this.name == my_name) e.setAttribute("style", `--bg-color: hsl(${Math.random() * 360}deg, 100%, 50%);`)
 		// Player name
 		e.children[2].textContent = this.name
-		if (this.name == my_name) e.appendChild(document.createElement("b")).innerHTML = "(You)"
+		if (this.name == my_name) {
+			e.appendChild(document.createElement("b")).innerHTML = "(You)"
+		}
 		// Add piles
 		for (var i = 0; i < this.piles.length; i++) {
 			var slot = document.createElement("div")
@@ -211,9 +215,11 @@ function getMe() { return getPlayerFromName(my_name) }
  * @typedef {{ type: "NewPile", player: string }} NewPileMessageType
  * @typedef {{ type: "RemovePile", player: string, pile: number }} RemovePileMessageType
  * @typedef {{ type: "PlayAndDiscard", playerFrom: string, fromPile: number, cardIndex: number, playerTo: string }} PlayAndDiscardMessageType
+ * @typedef {{ type: "RemovePlayer", name: string, onlyData: boolean }} RemovePlayerMessageType
+ * @typedef {{ type: "ReadyUpdate", data: boolean[], showBtn: boolean }} ReadyUpdateMessageType
  */
 socket.addEventListener("message", (e) => {
-	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType | PlayAndDiscardMessageType} */
+	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType | PlayAndDiscardMessageType | RemovePlayerMessageType | ReadyUpdateMessageType} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -310,6 +316,47 @@ socket.addEventListener("message", (e) => {
 		})
 		// Structural movement
 		pile.splice(data.cardIndex, 1)
+	} else if (data.type == "RemovePlayer") {
+		var p = getPlayerFromName(data.name)
+		if (!data.onlyData) {
+			players.splice(players.indexOf(p), 1)
+			p.element.remove()
+		} else {
+			[...p.element.children[1].children].slice(1).forEach((v) => v.remove());
+			[...p.element.children[1].children].forEach((v) => [...v.children].forEach((c) => c.remove()))
+			if (p.rider != null) {
+				p.rider.rider.elm.remove()
+				p.rider.extras.forEach((v) => v.elm.remove())
+			}
+		}
+		p.piles = [[]]
+		p.rider = null
+	} else if (data.type == "ReadyUpdate") {
+		for (var i = 0; i < players.length; i++) {
+			var ready = data.data[i]
+			// Add or remove active
+			if (ready) players[i].element.children[3].classList.add("active")
+			else players[i].element.children[3].classList.remove("active")
+			// Add the button
+			if (data.showBtn && players[i] == getMe() && data.data[i] == false) {
+				var btn = getMe().element.children[3]
+				if (btn instanceof HTMLDivElement) {
+					btn.textContent = "I'm Ready"
+					btn.classList.add("button")
+					function btnclick() {
+						btn.classList.remove("button")
+						btn.textContent = "Ready!"
+						socket.send(JSON.stringify({
+							type: "Ready"
+						}))
+						btn.removeEventListener("mouseup", btnclick)
+						btn.removeEventListener("touchend", btnclick)
+					}
+					btn.addEventListener("mouseup", btnclick)
+					btn.addEventListener("touchend", btnclick)
+				}
+			}
+		}
 	} else {
 		console.warn("Unknown message recieved...", data)
 	}
@@ -488,6 +535,7 @@ function cardDragEnd(card, mousePos) {
 			return
 		}
 		// 2. Try to play a card
+		if (me.piles.length == 0) return
 		//    a. Pick a random card
 		var pile = Math.floor(Math.random() * me.piles.length)
 		var card = me.piles[pile][me.piles[pile].length - 1]
@@ -510,5 +558,5 @@ function cardDragEnd(card, mousePos) {
 			}))
 		}
 	}
-	var id = setInterval(tick, 1000)
+	var id = setInterval(tick, 600)
 })();

@@ -6,6 +6,8 @@ import threading
 import time
 import datetime
 
+SECONDS_PER_CARD = 1.0
+
 class Card:
 	def canPlay(self, playerFrom: "Player", playerTo: "Player") -> bool:
 		return False
@@ -51,7 +53,6 @@ class HitCard(RiderCard):
 
 class SkipCard(RiderCard):
 	def deal(self, player: "Player", amount: int):
-		time.sleep(2.0 / len(player.game.players))
 		if amount == 1:
 			# Remove Skip card
 			player.game.broadcast(json.dumps({
@@ -68,6 +69,7 @@ class SkipCard(RiderCard):
 				"justOneExtra": True
 			}))
 			player.rider["extras"].pop()
+		time.sleep(SECONDS_PER_CARD)
 	@staticmethod
 	def getID() -> str:
 		return "skip"
@@ -145,6 +147,7 @@ class Player:
 		self.piles: list[list[Card]] = [[]]
 		self.rider: RiderType | None = None
 		self.hand: HandType | None = None
+		self.ready: bool = False
 	def getCreationMessage(self):
 		return json.dumps({
 			"type": "CreatePlayer",
@@ -159,15 +162,18 @@ class Game:
 	def __init__(self):
 		self.players: list[Player] = []
 		self.deck = []
-		self.populateDeck()
 		self.turn = 0
+		self.started = False
+		self.running = True
+		self.dealingThread = threading.Thread(target=self.runThread, name="dealer", args=())
+		self.dealingThread.start()
 	def populateDeck(self):
 		self.deck = [
-			*[HitCard() for _ in range(40)],
-			*[SkipCard() for _ in range(40)],
-			*[SplitCard() for _ in range(20)],
-			*[ExtraCard() for _ in range(20)],
-			*[StopCard() for _ in range(20)]
+			*[HitCard() for _ in range(24)],
+			*[SkipCard() for _ in range(24)],
+			*[SplitCard() for _ in range(14)],
+			*[ExtraCard() for _ in range(10)],
+			*[StopCard() for _ in range(10)]
 		]
 		random.shuffle(self.deck)
 	def findPlayerFromClient(self, c: Client):
@@ -186,10 +192,29 @@ class Game:
 		# Send game state
 		for p in self.players:
 			c.sendMessage(p.getCreationMessage())
+		if self.started:
+			c.sendMessage(json.dumps({
+				"type": "ReadyUpdate",
+				"data": [False for _ in self.players],
+				"showBtn": False
+			}))
+		else:
+			c.sendMessage(json.dumps({
+				"type": "ReadyUpdate",
+				"data": [p.ready for p in self.players],
+				"showBtn": False
+			}))
 	def onDisconnect(self, c: Client):
 		p = self.findPlayerFromClient(c)
 		if p:
 			p.client = None
+			if self.started == False:
+				self.players.remove(p)
+				self.broadcast(json.dumps({
+					"type": "RemovePlayer",
+					"name": p.name,
+					"onlyData": False
+				}))
 	def getPlayerFromTarget(self, target: str):
 		for p in self.players:
 			if p.name == target:
@@ -207,11 +232,18 @@ class Game:
 					# Login
 					p.client = c
 			else:
+				if self.started:
+					return
 				# Create a new player
 				newPlayer = Player(self, msg["name"])
 				self.players.append(newPlayer)
 				newPlayer.client = c
 				self.broadcast(newPlayer.getCreationMessage())
+				c.sendMessage(json.dumps({
+					"type": "ReadyUpdate",
+					"data": [p.ready for p in self.players],
+					"showBtn": True
+				}))
 		elif msg["type"] == "GrabCard":
 			playerFrom = self.findPlayerFromClient(c)
 			# Ensure player is logged in
@@ -253,10 +285,6 @@ class Game:
 			# Play the card!
 			card = pile[playerFrom.hand["cardIndex"]]
 			if not card.canPlay(playerFrom, playerTo):
-				c.sendMessage(json.dumps({
-					"type": "RevertCard",
-					"pile": pileIndex
-				}))
 				return
 			pile.remove(card)
 			card.play(playerFrom, pileIndex, playerFrom.hand["cardIndex"], playerTo)
@@ -269,18 +297,66 @@ class Game:
 					"player": playerFrom.name,
 					"pile": pileIndex
 				}))
+		elif msg["type"] == "Ready":
+			if self.started == False:
+				p = self.findPlayerFromClient(c)
+				if p == None:
+					return
+				p.ready = True
+				self.broadcast(json.dumps({
+					"type": "ReadyUpdate",
+					"data": [p.ready for p in self.players],
+					"showBtn": True
+				}))
 		else:
 			print(f'ERROR: unknown message type "{msg["type"]}" recieved from client {c.id}')
 			c.disconnect()
-	def dealCards(self):
+	def runThread(self):
+		while self.running:
+			self.playOneRoundFromThread()
+	def playOneRoundFromThread(self):
+		self.started = False
+		# Notify players that game is starting
+		for p in self.players:
+			p.ready = False
+		self.broadcast(json.dumps({
+			"type": "ReadyUpdate",
+			"data": [False for _ in self.players],
+			"showBtn": True
+		}))
 		# Wait for player login
 		while len(self.players) < 2:
 			time.sleep(0.3)
-		input("Press Enter to start dealing")
-		# Start
+			if not self.running: return
+		while False in [x.ready for x in self.players]:
+			time.sleep(0.3)
+			if not self.running: return
+		# Reset the ready states and player data
+		for p in self.players:
+			p.ready = False
+			p.piles = [[]]
+			p.rider = None
+			self.broadcast(json.dumps({
+				"type": "RemovePlayer",
+				"name": p.name,
+				"onlyData": True
+			}))
+		self.broadcast(json.dumps({
+			"type": "ReadyUpdate",
+			"data": [False for _ in self.players],
+			"showBtn": False
+		}))
+		# Start dealing!
+		self.started = True
+		self.dealCards()
+	def dealCards(self):
+		self.populateDeck()
+		# Start dealing
 		extraTurns = 20 + (len(self.players) * 3)
 		while extraTurns > 0:
+			# (while the deck has not run out)
 			if len(self.deck) == 0:
+				# (a few extra turns for the grounds)
 				extraTurns -= 1
 			# Do turn
 			turn = self.players[self.turn]
@@ -324,10 +400,9 @@ class Game:
 			"card": card.getID()
 		}))
 		# - Dealing speed
-		time.sleep(2.0 / len(self.players))
+		time.sleep(SECONDS_PER_CARD)
 
 g = Game()
-threading.Thread(target=g.dealCards, name="dealer", args=()).start()
 
 server.events_on_connect.append(g.onConnect)
 server.events_on_disconnect.append(g.onDisconnect)
@@ -336,4 +411,5 @@ server.run()
 
 # stop the dealing thread
 g.deck = []
+g.running = False
 print()
