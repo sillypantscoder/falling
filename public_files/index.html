@@ -104,9 +104,34 @@ body {
 .ready-btn.active, .ready-btn.button {
 	top: calc(100% - 5em);
 }
+
+#message-container {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	width: 100%;
+	height: max-content;
+	display: flex;
+	flex-direction: column-reverse;
+	align-items: center;
+}
+#message-container > div {
+	margin: 0.5em;
+	padding: 0.5em;
+	border: 0.2em solid red;
+	border-radius: 0.5em;
+	color: red;
+	background-color: white;
+	z-index: 5;
+	transition: opacity 0.2s ease-in-out;
+}
+.message-hidden {
+	opacity: 0;
+}
 		</style>
 	</head>
 	<body>
+		<div id="message-container"></div>
 		<script src="index.js"></script>
 	</body>
 </html>

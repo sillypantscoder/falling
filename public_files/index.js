@@ -25,11 +25,18 @@ socket.addEventListener("open", () => {
 			type: "Login",
 			name: my_name
 		}))
+	} else {
+		addMessage("You are not logged in! <button onclick='login()'>Log in</button>", false)
+		// @ts-ignore
+		window.login = () => {
+			var new_name = prompt("Enter your name:")
+			location.replace("?name=" + new_name)
+		}
 	}
 })
 socket.addEventListener("close", () => {
 	console.error("Warning! Websocket is disconnected!")
-	alert("Lost connection with the server! Refresh to re-join the game.")
+	addMessage("Lost connection with the server! Refresh to re-join the game.", false)
 })
 
 var my_name = query.name
@@ -41,6 +48,28 @@ var frame = async (/** @type {number} */ n) => {
 	}
 }
 var time = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * @param {string} data
+ * @param {boolean} hide
+ */
+function addMessage(data, hide) {
+	var m = document.createElement("div")
+	m.classList.add("message-hidden")
+	m.innerHTML = data
+	document.querySelector("#message-container")?.appendChild(m)
+	frame(2).then(() => {
+		m.classList.remove("message-hidden")
+	})
+	if (hide) {
+		time(1000).then(() => {
+			m.classList.add("message-hidden")
+		})
+		time(1200).then(() => {
+			m.remove()
+		})
+	}
+}
 
 (() => {
 	// Update document size to be correct
@@ -217,9 +246,10 @@ function getMe() { return getPlayerFromName(my_name) }
  * @typedef {{ type: "PlayAndDiscard", playerFrom: string, fromPile: number, cardIndex: number, playerTo: string }} PlayAndDiscardMessageType
  * @typedef {{ type: "RemovePlayer", name: string, onlyData: boolean }} RemovePlayerMessageType
  * @typedef {{ type: "ReadyUpdate", data: boolean[], showBtn: boolean }} ReadyUpdateMessageType
+ * @typedef {{ type: "Message", msg: string }} MessageMessageType
  */
 socket.addEventListener("message", (e) => {
-	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType | PlayAndDiscardMessageType | RemovePlayerMessageType | ReadyUpdateMessageType} */
+	/** @type {CreatePlayerMessageType | PlayRiderMessageType | DealCardMessageType | RemoveRiderMessageType | NewPileMessageType | RemovePileMessageType | PlayAndDiscardMessageType | RemovePlayerMessageType | ReadyUpdateMessageType | MessageMessageType} */
 	var data = JSON.parse(e.data)
 	if (data.type == "CreatePlayer") {
 		var newPlayer = new Player(
@@ -357,6 +387,8 @@ socket.addEventListener("message", (e) => {
 				}
 			}
 		}
+	} else if (data.type == "Message") {
+		addMessage(data.msg, true)
 	} else {
 		console.warn("Unknown message recieved...", data)
 	}
@@ -486,8 +518,8 @@ document.body.addEventListener("touchstart", (event) => {
 				mouseDownOnCard(minDistI, getEventLocation(event), minDistI)
 			}
 		}
+		event.preventDefault()
 	}
-	event.preventDefault()
 }, { passive: false })
 
 /**

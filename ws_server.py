@@ -9,8 +9,9 @@ import datetime
 SECONDS_PER_CARD = 1.0
 
 class Card:
-	def canPlay(self, playerFrom: "Player", playerTo: "Player") -> bool:
-		return False
+	def canPlay(self, playerFrom: "Player", playerTo: "Player") -> str | typing.Literal[True]:
+		"""Find whether it is allowed to play this card on another person. Return True if the play is valid, or a reason otherwise."""
+		return "You can't play this card!"
 	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		pass
 	@staticmethod
@@ -19,7 +20,10 @@ class Card:
 
 class RiderCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
-		return playerTo.rider == None
+		if playerTo.rider == None:
+			return True
+		else:
+			return f"<b>{playerTo.name}</b> already has a \"<b>{playerTo.rider['rider'].getID()}</b>\" card active!"
 	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		playerTo.rider = {
 			"rider": self,
@@ -89,7 +93,10 @@ class SplitCard(RiderCard):
 
 class ExtraCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
-		return playerTo.rider != None
+		if playerTo.rider != None:
+			return True
+		else:
+			return f"<b>{playerTo.name}</b> doesn't have a card active!"
 	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		if playerTo.rider != None:
 			playerTo.rider["extras"].append(self)
@@ -106,7 +113,10 @@ class ExtraCard(Card):
 
 class StopCard(Card):
 	def canPlay(self, playerFrom: "Player", playerTo: "Player"):
-		return playerTo.rider != None
+		if playerTo.rider != None:
+			return True
+		else:
+			return f"<b>{playerTo.name}</b> doesn't have a card active!"
 	def play(self, playerFrom: "Player", pileIndex: int, cardIndex: int, playerTo: "Player"):
 		playerTo.game.broadcast(json.dumps({
 			"type": "PlayAndDiscard",
@@ -282,10 +292,16 @@ class Game:
 			# Find the selected card
 			pileIndex = playerFrom.hand["pileIndex"]
 			pile = playerFrom.piles[pileIndex]
-			# Play the card!
+			# Determine whether we can play the card
 			card = pile[playerFrom.hand["cardIndex"]]
-			if not card.canPlay(playerFrom, playerTo):
+			canPlay = card.canPlay(playerFrom, playerTo)
+			if canPlay != True:
+				c.sendMessage(json.dumps({
+					"type": "Message",
+					"msg": canPlay
+				}))
 				return
+			# Play the card!
 			pile.remove(card)
 			card.play(playerFrom, pileIndex, playerFrom.hand["cardIndex"], playerTo)
 			playerFrom.hand = None
@@ -378,7 +394,6 @@ class Game:
 			self.turn += 1
 			if self.turn >= len(self.players):
 				self.turn = 0
-		print("Finished dealing")
 	def dealCard(self, player: Player, pileIndex: int):
 		if pileIndex >= len(player.piles): return
 		# - Find which card to use
