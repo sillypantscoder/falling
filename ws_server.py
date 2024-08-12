@@ -375,6 +375,9 @@ class Game:
 				# (a few extra turns for the grounds)
 				extraTurns -= 1
 			# Do turn
+			if self.turn >= len(self.players):
+				extraTurns -= 1
+				continue
 			turn = self.players[self.turn]
 			# - Make sure there is at least one pile
 			if len(turn.piles) == 0:
